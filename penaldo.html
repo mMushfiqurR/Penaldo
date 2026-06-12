@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Penaldo 7 - 10 Shot Championship</title>
+    <style>
+        body {
+            margin: 0;
+            background: #0d0d0d;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+        }
+        canvas {
+            background: #11441b; 
+            border: 4px solid #333;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.9);
+            border-radius: 8px;
+        }
+        #scoreboard {
+            display: flex;
+            justify-content: space-between;
+            width: 900px;
+            margin-bottom: 12px;
+            font-size: 24px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .score {
+            background: rgba(0, 0, 0, 0.85);
+            padding: 10px 22px;
+            border-radius: 6px;
+            border: 2px solid #444;
+            min-width: 200px;
+        }
+        #striker-board { color: #ff3333; border-color: #aa1111; text-align: left; }
+        #keeper-board { color: #ffb74d; border-color: #f57c00; text-align: right; }
+        #game-status {
+            font-size: 26px;
+            color: #ffd700;
+            align-self: center;
+            text-shadow: 0 0 12px rgba(255, 215, 0, 0.5);
+            text-align: center;
+        }
+        #shot-counter {
+            font-size: 16px;
+            color: #aaa;
+            margin-top: 4px;
+        }
+        #instructions {
+            margin-top: 12px;
+            font-size: 14px;
+            text-align: center;
+            color: #aaa;
+            background: rgba(0,0,0,0.7);
+            padding: 12px 25px;
+            border-radius: 6px;
+            line-height: 1.6;
+            width: 850px;
+        }
+        .key {
+            background: #252525;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #fff;
+            font-family: monospace;
+            border: 1px solid #555;
+        }
+        /* Game Over End Screen Pop-up style */
+        #summary-overlay {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 900px;
+            height: 550px;
+            background: rgba(0, 0, 0, 0.95);
+            border-radius: 8px;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        #summary-title {
+            font-size: 48px;
+            color: #ffd700;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        #summary-winner {
+            font-size: 28px;
+            color: #fff;
+            margin-bottom: 30px;
+        }
+        .summary-stat {
+            font-size: 22px;
+            margin: 8px 0;
+        }
+        #restart-btn {
+            margin-top: 35px;
+            padding: 12px 35px;
+            font-size: 18px;
+            font-weight: bold;
+            color: white;
+            background: #ff3333;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: background 0.2s;
+        }
+        #restart-btn:hover {
+            background: #cc1111;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="scoreboard">
+        <div class="score" id="striker-board">Penaldo (WASD): <span id="striker-score">0</span></div>
+        <div id="game-status">
+            <div>STADIUM PENALTY</div>
+            <div id="shot-counter">SHOT: 1 / 10</div>
+        </div>
+        <div class="score" id="keeper-board">Keeper (Arrows): <span id="keeper-score">0</span></div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="900" height="550"></canvas>
+        
+        <div id="summary-overlay">
+            <div id="summary-title">Full Time</div>
+            <div id="summary-winner">MATCH DRAWN!</div>
+            <div class="summary-stat" style="color: #ff3333;">Penaldo Goals: <span id="final-striker">0</span></div>
+            <div class="summary-stat" style="color: #ffb74d;">Goalkeeper Saves: <span id="final-keeper">0</span></div>
+            <button id="restart-btn" onclick="restartChampionship()">Play Again</button>
+        </div>
+    </div>
+
+    <div id="instructions">
+        <strong>PENALDO (WASD):</strong> Move the laser reticle inside the net to aim. Press <span class="key">SPACEBAR</span> to run up and shoot! <br>
+        <strong>GOALKEEPER (◄ / ►):</strong> Actively shuffle left or right across the goal line to stop the incoming shot.
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Match Scores & Limiters
+        let strikerScore = 0;
+        let keeperScore = 0;
+        let totalShotsTaken = 0;
+        const maxShots = 10;
+        
+        // Match Flow States
+        let isRunningUp = false;
+        let isBallFlying = false;
+        let roundEnding = false;
+        let isMatchFinished = false;
+
+        // 3D Grid Projections
+        const goal3D = {
+            topY: 120,
+            bottomY: 230,
+            leftX: 280,
+            rightX: 620,
+            width: 340,
+            height: 110
+        };
+
+        // Live Positions & Physics Physics (Reduced speed)
+        let ball = { 
+            x: 450, y: 480, z: 0,
+            baseRadius: 20, radius: 20, 
+            vx: 0, vy: 0, vz: 0,
+            speed: 0.007 
+        };
+        
+        let aim = { x: 450, y: 175, speed: 3 };
+        let keeper = { x: 450, y: goal3D.bottomY - 30, radius: 28, speed: 4 };
+
+        // Penaldo Model Stance Setup
+        let penaldo = {
+            x: 390, 
+            y: 495,
+            offsetX: 0, 
+            offsetY: 0
+        };
+
+        // Track Keys
+        const keys = {};
+        window.addEventListener("keydown", (e) => {
+            keys[e.code] = true;
+            if (e.code === "Space" && !isRunningUp && !isBallFlying && !roundEnding && !isMatchFinished) {
+                startRunUp();
+            }
+        });
+        window.addEventListener("keyup", (e) => keys[e.code] = false);
+
+        function startRunUp() {
+            isRunningUp = true;
+            document.getElementById("game-status").firstElementChild.innerText = "PENALDO RUNS UP...";
+        }
+
+        function shootBall3D() {
+            isRunningUp = false;
+            isBallFlying = true;
+            
+            ball.vx = (aim.x - ball.x) * ball.speed;
+            ball.vy = (aim.y - ball.y) * ball.speed;
+            ball.vz = ball.speed; 
+            
+            document.getElementById("game-status").firstElementChild.innerText = "SHOT TAKEN!";
+        }
+
+        function update() {
+            if (isMatchFinished) return;
+
+            // 1. LIVE STRIKER 3D AIM CONTROLS
+            if (!isRunningUp && !isBallFlying && !roundEnding) {
+                if (keys["KeyA"]) aim.x -= aim.speed;
+                if (keys["KeyD"]) aim.x += aim.speed;
+                if (keys["KeyW"]) aim.y -= aim.speed;
+                if (keys["KeyS"]) aim.y += aim.speed;
+
+                if (aim.x < goal3D.leftX - 30) aim.x = goal3D.leftX - 30;
+                if (aim.x > goal3D.rightX + 30) aim.x = goal3D.rightX + 30;
+                if (aim.y < goal3D.topY - 20) aim.y = goal3D.topY - 20;
+                if (aim.y > goal3D.bottomY + 15) aim.y = goal3D.bottomY + 15;
+            }
+
+            // 2. LIVE KEEPER SIDE-SHUFFLING
+            if (!roundEnding) {
+                if (keys["ArrowLeft"]) keeper.x -= keeper.speed;
+                if (keys["ArrowRight"]) keeper.x += keeper.speed;
+
+                const minX = goal3D.leftX + keeper.radius * 0.6;
+                const maxX = goal3D.rightX - keeper.radius * 0.6;
+                if (keeper.x < minX) keeper.x = minX;
+                if (keeper.x > maxX) keeper.x = maxX;
+            }
+
+            // 3. PENALDO RUN-UP ANIMATION PROGRESSION
+            if (isRunningUp) {
+                let dx = ball.x - (penaldo.x + 15);
+                let dy = ball.y - (penaldo.y - 10);
+                
+                penaldo.x += dx * 0.12;
+                penaldo.y += dy * 0.12;
+                penaldo.offsetY = Math.sin(Date.now() * 0.02) * 4;
+
+                if (Math.abs(dx) < 18 && Math.abs(dy) < 18) {
+                    shootBall3D();
+                }
+            }
+
+            // 4. LIVE 3D BALL TRAJECTORY ENGINE
+            if (isBallFlying) {
+                ball.x += ball.vx;
+                ball.y += ball.vy;
+                ball.z += ball.vz; 
+
+                ball.radius = ball.baseRadius * (1 - ball.z * 1.05);
+                if (ball.radius < 8) ball.radius = 8;
+
+                if (ball.y <= goal3D.bottomY) {
+                    let distanceToKeeper = Math.abs(ball.x - keeper.x);
+                    
+                    if (distanceToKeeper < (keeper.radius + ball.radius) && ball.y > goal3D.topY - 15) {
+                        processOutcome(false); 
+                    } 
+                    else if (ball.x >= goal3D.leftX && ball.x <= goal3D.rightX && ball.y >= goal3D.topY && ball.y <= goal3D.bottomY) {
+                        processOutcome(true); 
+                    } else {
+                        processOutcome(false); 
+                    }
+                }
+            }
+        }
+
+        function processOutcome(isGoal) {
+            isBallFlying = false;
+            roundEnding = true;
+            totalShotsTaken++;
+
+            if (isGoal) {
+                strikerScore++;
+                document.getElementById("striker-score").innerText = strikerScore;
+                document.getElementById("game-status").firstElementChild.innerText = "GOAL!";
+                document.getElementById("game-status").firstElementChild.style.color = "#ff3333";
+            } else {
+                keeperScore++;
+                document.getElementById("keeper-score").innerText = keeperScore;
+                document.getElementById("game-status").firstElementChild.innerText = "Penaldo can't Penalty!";
+                document.getElementById("game-status").firstElementChild.style.color = "#ffb74d";
+            }
+
+            // Check if match limit has been reached
+            if (totalShotsTaken >= maxShots) {
+                setTimeout(triggerMatchSummary, 2000);
+            } else {
+                setTimeout(resetPitch3D, 2000);
+            }
+        }
+
+        function triggerMatchSummary() {
+            isMatchFinished = true;
+            
+            // Populate summary menu numbers
+            document.getElementById("final-striker").innerText = strikerScore;
+            document.getElementById("final-keeper").innerText = keeperScore;
+
+            // Compute victory criteria
+            const winDiv = document.getElementById("summary-winner");
+            if (strikerScore > keeperScore) {
+                winDiv.innerText = "PENALDO WINS THE CHAMPIONSHIP!";
+                winDiv.style.color = "#ff3333";
+            } else if (keeperScore > strikerScore) {
+                winDiv.innerText = "GOALKEEPER DEFEATS PENALDO!";
+                winDiv.style.color = "#ffb74d";
+            } else {
+                winDiv.innerText = "DRAMATIC DRAW MATCH!";
+                winDiv.style.color = "#ffffff";
+            }
+
+            // Reveal Overlay Screen
+            document.getElementById("summary-overlay").style.display = "flex";
+        }
+
+        function restartChampionship() {
+            strikerScore = 0;
+            keeperScore = 0;
+            totalShotsTaken = 0;
+            isMatchFinished = false;
+
+            document.getElementById("striker-score").innerText = 0;
+            document.getElementById("keeper-score").innerText = 0;
+            document.getElementById("summary-overlay").style.display = "none";
+
+            resetPitch3D();
+        }
+
+        function resetPitch3D() {
+            isRunningUp = false;
+            isBallFlying = false;
+            roundEnding = false;
+
+            ball.x = 450;
+            ball.y = 480;
+            ball.z = 0;
+            ball.radius = ball.baseRadius;
+
+            aim.x = 450;
+            aim.y = 175;
+            keeper.x = 450;
+
+            penaldo.x = 390;
+            penaldo.y = 495;
+            penaldo.offsetX = 0;
+            penaldo.offsetY = 0;
+
+            // Refresh header titles
+            document.getElementById("game-status").firstElementChild.innerText = "STADIUM PENALTY";
+            document.getElementById("game-status").firstElementChild.style.color = "#ffd700";
+            document.getElementById("shot-counter").innerText = `SHOT: ${totalShotsTaken + 1} / ${maxShots}`;
+        }
+
+        function drawPlayerPenaldo() {
+            ctx.save();
+            let px = penaldo.x;
+            let py = penaldo.y + penaldo.offsetY;
+
+            ctx.fillStyle = "rgba(0,0,0,0.35)";
+            ctx.beginPath();
+            ctx.ellipse(px + 15, penaldo.y + 35, 25, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(px + 5, py + 15, 6, 15);  
+            ctx.fillRect(px + 20, py + 15, 6, 15); 
+            ctx.fillStyle = "#ff3333";
+            ctx.fillRect(px + 2, py + 28, 9, 6);   
+            ctx.fillRect(px + 20, py + 28, 9, 6);  
+
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(px, py, 32, 16);
+
+            ctx.fillStyle = "#ff3333";
+            ctx.fillRect(px - 2, py - 35, 36, 35);
+
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(px - 2, py - 35, 36, 4); 
+            ctx.fillRect(px - 2, py - 15, 4, 15); 
+            ctx.fillRect(px + 30, py - 15, 4, 15);
+
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 9px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("PENALDO", px + 16, py - 20);
+            ctx.font = "bold 16px Arial";
+            ctx.fillText("7", px + 16, py - 6);
+
+            ctx.fillStyle = "#ff3333";
+            ctx.fillRect(px - 14, py - 32, 12, 6); 
+            ctx.fillRect(px + 34, py - 32, 12, 6); 
+            ctx.fillStyle = "#ffdbac"; 
+            ctx.fillRect(px - 18, py - 32, 5, 6);
+            ctx.fillRect(px + 46, py - 32, 5, 6);
+
+            ctx.fillStyle = "#ffdbac"; 
+            ctx.beginPath(); ctx.arc(px + 16, py - 43, 8, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = "#222"; 
+            ctx.beginPath(); ctx.arc(px + 16, py - 46, 8, Math.PI, 0); ctx.fill();
+
+            ctx.restore();
+        }
+
+        function draw3DScene() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Pitch guidelines
+            ctx.strokeStyle = "rgba(255,255,255,0.12)";
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(0, 230); ctx.lineTo(goal3D.leftX - 60, goal3D.bottomY); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(900, 230); ctx.lineTo(goal3D.rightX + 60, goal3D.bottomY); ctx.stroke();
+
+            // Field lawn
+            for (let i = 0; i < 7; i++) {
+                ctx.fillStyle = i % 2 === 0 ? "rgba(0, 0, 0, 0.15)" : "rgba(255, 255, 255, 0.03)";
+                ctx.fillRect(0, 230 + i * 46, 900, 46);
+            }
+
+            // Box Area
+            ctx.strokeStyle = "rgba(255,255,255,0.35)";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(120, 530);   ctx.lineTo(220, 230);   ctx.lineTo(680, 230);   ctx.lineTo(780, 530);   
+            ctx.closePath(); ctx.stroke();
+
+            // Spot
+            ctx.fillStyle = "#fff";
+            ctx.beginPath(); ctx.arc(450, 480, 7, 0, Math.PI * 2); ctx.fill();
+
+            // Net Mesh
+            ctx.fillStyle = "rgba(0, 30, 0, 0.65)";
+            ctx.fillRect(goal3D.leftX, goal3D.topY, goal3D.width, goal3D.height);
+            ctx.strokeStyle = "rgba(255,255,255,0.18)";
+            ctx.lineWidth = 1;
+            for (let x = goal3D.leftX; x <= goal3D.rightX; x += 12) {
+                ctx.beginPath(); ctx.moveTo(x, goal3D.topY); ctx.lineTo(x, goal3D.bottomY); ctx.stroke();
+            }
+            for (let y = goal3D.topY; y <= goal3D.bottomY; y += 12) {
+                ctx.beginPath(); ctx.moveTo(goal3D.leftX, y); ctx.lineTo(goal3D.rightX, y); ctx.stroke();
+            }
+
+            // White Goal Frame
+            ctx.strokeStyle = "#ffffff";
+            ctx.lineWidth = 6;
+            ctx.strokeRect(goal3D.leftX, goal3D.topY, goal3D.width, goal3D.height);
+
+            // Crosshair Target
+            if (!isRunningUp && !isBallFlying && !roundEnding && !isMatchFinished) {
+                ctx.strokeStyle = "rgba(255, 0, 50, 0.85)"; 
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(aim.x - 20, aim.y); ctx.lineTo(aim.x + 20, aim.y);
+                ctx.moveTo(aim.x, aim.y - 20); ctx.lineTo(aim.x, aim.y + 20);
+                ctx.stroke();
+                ctx.beginPath(); ctx.arc(aim.x, aim.y, 11, 0, Math.PI * 2); ctx.stroke();
+            }
+
+            // Draw Keeper
+            ctx.fillStyle = "#ffaa00"; 
+            ctx.beginPath(); ctx.arc(keeper.x, keeper.y, keeper.radius, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2.5; ctx.stroke();
+            ctx.fillStyle = "#fff";
+            ctx.beginPath(); ctx.arc(keeper.x - keeper.radius, keeper.y + 6, 6, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(keeper.x + keeper.radius, keeper.y + 6, 6, 0, Math.PI*2); ctx.fill();
+
+            // Draw Penaldo
+            if (!isBallFlying || roundEnding) {
+                drawPlayerPenaldo();
+            }
+
+            // Draw Ball Flight
+            if (isBallFlying || isRunningUp) {
+                ctx.fillStyle = "rgba(0,0,0,0.4)";
+                ctx.beginPath();
+                ctx.arc(ball.x, goal3D.bottomY + (480 - goal3D.bottomY) * (1 - ball.z), ball.radius * 0.8, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = "#ffffff";
+                ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = "#222"; ctx.lineWidth = ball.radius > 14 ? 2.5 : 1.2; ctx.stroke();
+                ctx.fillStyle = "#111";
+                ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius * 0.35, 0, Math.PI * 2); ctx.fill();
+            } else if (!isMatchFinished) {
+                ctx.fillStyle = "#ffffff";
+                ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = "#222"; ctx.lineWidth = 2.5; ctx.stroke();
+                ctx.fillStyle = "#111";
+                ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius * 0.35, 0, Math.PI * 2); ctx.fill();
+            }
+        }
+
+        function mainLoop() {
+            update();
+            draw3DScene();
+            requestAnimationFrame(mainLoop);
+        }
+
+        mainLoop();
+    </script>
+</body>
+</html>
